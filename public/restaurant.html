@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Меню — ТюменьFood</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="site-header">
+  <div class="brand"><a href="/" style="color:#fff">🍲 ТюменьFood</a></div>
+  <nav><a href="/">Все рестораны</a></nav>
+</header>
+<main>
+  <div id="restaurantInfo">
+    <h1 id="rName">Загрузка…</h1>
+    <p class="subtitle" id="rAddr"></p>
+  </div>
+
+  <div class="layout-with-cart">
+    <div id="menu"></div>
+
+    <div class="card cart-box">
+      <h2 class="mt-0">Корзина</h2>
+      <div id="cartLines"><p class="text-muted">Корзина пуста</p></div>
+      <div class="cart-total"><span>Итого</span><span id="cartTotal">0 ₽</span></div>
+
+      <form id="checkoutForm" style="margin-top:16px;">
+        <fieldset>
+          <legend>Данные</legend>
+          <label>Имя<input type="text" name="customer_name" required></label>
+          <label>Телефон<input type="tel" name="customer_phone" required placeholder="+7"></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Как получить заказ</legend>
+          <label class="option"><input type="radio" name="fulfillment_type" value="self_pickup" checked> Самовывоз (QR-код на кассе)</label>
+          <label class="option"><input type="radio" name="fulfillment_type" value="platform_courier"> Курьер</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Оплата</legend>
+          <label class="option"><input type="radio" name="payment_method" value="card" checked> Картой онлайн</label>
+          <label class="option"><input type="radio" name="payment_method" value="sbp_qr"> По QR (СБП)</label>
+          <label class="option"><input type="radio" name="payment_method" value="cash_on_pickup"> Наличными при получении</label>
+          <label class="option"><input type="radio" name="payment_method" value="terminal_on_pickup"> Картой при получении (терминал)</label>
+        </fieldset>
+
+        <button type="submit" id="submitBtn" style="width:100%;">Оформить заказ</button>
+      </form>
+    </div>
+  </div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const slug = params.get('slug');
+const cartKey = `cart:${slug}`;
+let restaurant = null;
+
+function getCart() {
+  try { return JSON.parse(localStorage.getItem(cartKey) || '[]'); } catch { return []; }
+}
+function setCart(cart) { localStorage.setItem(cartKey, JSON.stringify(cart)); renderCart(); }
+
+function addToCart(item) {
+  const cart = getCart();
+  const line = cart.find(l => l.menu_item_id === item.id);
+  if (line) line.qty += 1;
+  else cart.push({ menu_item_id: item.id, name: item.name, price: item.price, qty: 1 });
+  setCart(cart);
+}
+function changeQty(id, delta) {
+  let cart = getCart();
+  const line = cart.find(l => l.menu_item_id === id);
+  if (!line) return;
+  line.qty += delta;
+  cart = cart.filter(l => l.qty > 0);
+  setCart(cart);
+}
+
+function renderCart() {
+  const cart = getCart();
+  const linesEl = document.getElementById('cartLines');
+  const totalEl = document.getElementById('cartTotal');
+  if (!cart.length) {
+    linesEl.innerHTML = '<p class="text-muted">Корзина пуста</p>';
+    totalEl.textContent = '0 ₽';
+    document.getElementById('submitBtn').disabled = true;
+    return;
+  }
+  let total = 0;
+  linesEl.innerHTML = cart.map(l => {
+    total += l.price * l.qty;
+    return `<div class="cart-line">
+      <span>${l.name}</span>
+      <span class="qty-control">
+        <button type="button" onclick="changeQty(${l.menu_item_id}, -1)">−</button>
+        ${l.qty}
+        <button type="button" onclick="changeQty(${l.menu_item_id}, 1)">+</button>
+      </span>
+    </div>`;
+  }).join('');
+  totalEl.textContent = total + ' ₽';
+  document.getElementById('submitBtn').disabled = false;
+}
+
+async function loadMenu() {
+  const res = await fetch(`/api/restaurants/${encodeURIComponent(slug)}`);
+  if (!res.ok) {
+    document.getElementById('rName').textContent = 'Ресторан не найден';
+    return;
+  }
+  const data = await res.json();
+  restaurant = data.restaurant;
+  document.getElementById('rName').textContent = restaurant.name;
+  document.getElementById('rAddr').textContent = `${restaurant.address || ''} · ${restaurant.phone || ''}`;
+
+  const byCategory = {};
+  for (const item of data.menu) {
+    (byCategory[item.category] ||= []).push(item);
+  }
+  const menuEl = document.getElementById('menu');
+  menuEl.innerHTML = Object.entries(byCategory).map(([cat, items]) => `
+    <div class="menu-category">
+      <h2>${cat}</h2>
+      ${items.map(it => `
+        <div class="menu-item">
+          <div class="info">
+            <h4>${it.name}</h4>
+            <p>${it.description || ''}</p>
+          </div>
+          <div class="price">${it.price} ₽</div>
+          <button type="button" onclick='addToCart(${JSON.stringify(it)})'>Добавить</button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  renderCart();
+}
+
+document.getElementById('checkoutForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const cart = getCart();
+  if (!cart.length) return;
+  const fd = new FormData(e.target);
+  const payload = {
+    restaurant_slug: slug,
+    items: cart.map(l => ({ menu_item_id: l.menu_item_id, qty: l.qty })),
+    fulfillment_type: fd.get('fulfillment_type'),
+    payment_method: fd.get('payment_method'),
+    customer_name: fd.get('customer_name'),
+    customer_phone: fd.get('customer_phone'),
+  };
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Оформляем…';
+  try {
+    const res = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Ошибка оформления заказа');
+    localStorage.removeItem(cartKey);
+    location.href = `/order-confirmation.html?id=${data.order.id}`;
+  } catch (err) {
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = 'Оформить заказ';
+  }
+});
+
+loadMenu();
+</script>
+</body>
+</html>

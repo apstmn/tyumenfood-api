@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ТюменьFood — доставка и самовывоз из ресторанов Тюмени</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="site-header">
+  <div class="brand">🍲 ТюменьFood
+    <small>маркетплейс ресторанов и кафе Тюмени · демо-проект</small>
+  </div>
+  <nav>
+    <a href="/restaurant-admin.html">Кабинет ресторана</a>
+    <a href="/platform-admin.html">Кабинет платформы</a>
+  </nav>
+</header>
+<main>
+  <h1>Рестораны и кафе Тюмени</h1>
+  <p class="subtitle">Закажите онлайн — заберите сами или получите с курьером. Оплата картой, по QR или при получении.</p>
+  <div id="list" class="grid">Загрузка…</div>
+</main>
+<script>
+async function load() {
+  const res = await fetch('/api/restaurants');
+  const restaurants = await res.json();
+  const list = document.getElementById('list');
+  if (!restaurants.length) {
+    list.innerHTML = '<p class="text-muted">Пока нет подключённых ресторанов.</p>';
+    return;
+  }
+  list.innerHTML = restaurants.map(r => `
+    <a class="card restaurant-card" href="/restaurant.html?slug=${encodeURIComponent(r.slug)}">
+      <span class="badge">${r.city}</span>
+      <h3>${r.name}</h3>
+      <div class="addr">${r.address || ''}</div>
+    </a>
+  `).join('');
+}
+load();
+</script>
+</body>
+</html>

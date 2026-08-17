@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Заказ оформлен — ТюменьFood</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="site-header">
+  <div class="brand"><a href="/" style="color:#fff">🍲 ТюменьFood</a></div>
+  <nav><a href="/">На главную</a></nav>
+</header>
+<main>
+  <div class="card" id="box">Загрузка…</div>
+</main>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+
+const STATUS_LABELS = {
+  new: 'Принят', accepted: 'Подтверждён рестораном', preparing: 'Готовится',
+  ready: 'Готов к выдаче', picked_up: 'Забран', completed: 'Завершён', cancelled: 'Отменён',
+};
+const PAY_LABELS = { card: 'Картой онлайн', sbp_qr: 'По QR (СБП)', cash_on_pickup: 'Наличными при получении', terminal_on_pickup: 'Картой при получении' };
+
+async function load() {
+  const res = await fetch(`/api/orders/${id}`);
+  const box = document.getElementById('box');
+  if (!res.ok) { box.innerHTML = '<p>Заказ не найден.</p>'; return; }
+  const { order, items, restaurant } = await res.json();
+
+  const itemsHtml = items.map(i => `<div class="cart-line"><span>${i.name} × ${i.qty}</span><span>${i.price * i.qty} ₽</span></div>`).join('');
+
+  let pickupHtml = '';
+  if (order.fulfillment_type === 'self_pickup' && order.qr_data_url) {
+    pickupHtml = `
+      <div class="qr-box">
+        <p>Покажите этот QR-код (или назовите код <b>${order.pickup_code}</b>) при получении заказа</p>
+        <img src="${order.qr_data_url}" alt="QR самовывоза" width="200" height="200">
+      </div>`;
+  }
+
+  let paymentHtml = '';
+  if (order.payment_method === 'sbp_qr' && order.payment_qr_data_url) {
+    paymentHtml = `<div class="qr-box"><p>Демо-QR оплаты СБП</p><img src="${order.payment_qr_data_url}" width="180" height="180"></div>`;
+  }
+  const payPending = order.payment_status !== 'paid';
+
+  box.innerHTML = `
+    <h1 class="mt-0">Заказ №${order.id} оформлен</h1>
+    <p class="subtitle">${restaurant.name} · ${restaurant.address || ''} · ${restaurant.phone || ''}</p>
+
+    <p><span class="status-pill status-${order.status}">${STATUS_LABELS[order.status] || order.status}</span>
+       &nbsp; Оплата: <span class="${payPending ? 'pay-pending' : 'pay-paid'}">${PAY_LABELS[order.payment_method]} — ${payPending ? 'ожидает оплаты при получении' : 'оплачено'}</span></p>
+
+    <h2>Состав заказа</h2>
+    ${itemsHtml}
+    <div class="cart-total"><span>Итого к оплате</span><span>${order.subtotal} ₽</span></div>
+
+    <div class="note-box">
+      Комиссия платформы (${Math.round(order.commission_rate * 100)}%): <b>${order.commission_amount.toFixed(2)} ₽</b> —
+      удерживается автоматически. К выплате ресторану: <b>${order.restaurant_payout.toFixed(2)} ₽</b>.
+    </div>
+
+    ${pickupHtml}
+    ${paymentHtml}
+
+    <p class="text-muted" style="margin-top:20px;">Статус заказа обновляется автоматически.</p>
+  `;
+}
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

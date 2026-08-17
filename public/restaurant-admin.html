@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Кабинет ресторана — ТюменьFood</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="site-header">
+  <div class="brand"><a href="/" style="color:#fff">🍲 ТюменьFood</a> — кабинет ресторана</div>
+  <nav id="navArea"></nav>
+</header>
+<main id="app">Загрузка…</main>
+
+<script>
+const STATUS_FLOW = ['new', 'accepted', 'preparing', 'ready', 'picked_up', 'completed'];
+const STATUS_LABELS = {
+  new: 'Новый', accepted: 'Принят', preparing: 'Готовится', ready: 'Готов к выдаче',
+  picked_up: 'Забран', completed: 'Завершён', cancelled: 'Отменён',
+};
+
+async function api(path, opts) {
+  const res = await fetch(`/api/restaurant${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+
+function renderLogin(error) {
+  document.getElementById('navArea').innerHTML = '';
+  document.getElementById('app').innerHTML = `
+    <div class="card login-box">
+      <h1 class="mt-0">Вход в кабинет ресторана</h1>
+      ${error ? `<p style="color:#e03131">${error}</p>` : ''}
+      <form id="loginForm">
+        <label>Логин<input type="text" name="username" required></label>
+        <label>Пароль<input type="password" name="password" required></label>
+        <button type="submit" style="width:100%;margin-top:12px;">Войти</button>
+      </form>
+      <p class="text-muted" style="margin-top:14px;font-size:0.82rem;">
+        Демо-доступы после <code>npm run seed</code>: sytny/pass123, pelmennaya/pass123, bowlroll/pass123, plovhouse/pass123
+      </p>
+    </div>`;
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api('/login', { method: 'POST', body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }) });
+      boot();
+    } catch (err) {
+      renderLogin(err.message);
+    }
+  });
+}
+
+async function renderDashboard(restaurant) {
+  document.getElementById('navArea').innerHTML = `<a href="#" id="logoutLink" style="color:#fff">Выйти (${restaurant.name})</a>`;
+  document.getElementById('logoutLink').onclick = async (e) => { e.preventDefault(); await api('/logout', { method: 'POST' }); boot(); };
+
+  const [orders, payouts] = await Promise.all([api('/orders'), api('/payouts/summary')]);
+
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <h1 class="mt-0">${restaurant.name}</h1>
+    <p class="subtitle">Комиссия платформы: ${Math.round(restaurant.commission_rate * 100)}% — удерживается автоматически с каждого оплаченного заказа.</p>
+
+    <div class="stat-row">
+      <div class="stat-card"><div class="num">${payouts.orders_count}</div><div class="label">Оплаченных заказов</div></div>
+      <div class="stat-card"><div class="num">${payouts.gross_revenue.toFixed(0)} ₽</div><div class="label">Оборот (сумма заказов)</div></div>
+      <div class="stat-card"><div class="num">${payouts.commission_withheld.toFixed(0)} ₽</div><div class="label">Удержано комиссии</div></div>
+      <div class="stat-card"><div class="num">${payouts.net_payout.toFixed(0)} ₽</div><div class="label">К выплате ресторану</div></div>
+    </div>
+
+    <h2>Заказы</h2>
+    <div id="ordersList"></div>
+  `;
+
+  const listEl = document.getElementById('ordersList');
+  if (!orders.length) {
+    listEl.innerHTML = '<p class="text-muted">Заказов пока нет.</p>';
+    return;
+  }
+
+  listEl.innerHTML = orders.map(o => {
+    const nextStatus = STATUS_FLOW[STATUS_FLOW.indexOf(o.status) + 1];
+    const itemsStr = o.items.map(i => `${i.name} × ${i.qty}`).join(', ');
+    const source = o.aggregator_source === 'direct' ? 'Сайт' : o.aggregator_source;
+    return `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div>
+            <b>Заказ №${o.id}</b> · ${source} · ${o.fulfillment_type === 'self_pickup' ? 'самовывоз' : o.fulfillment_type === 'platform_courier' ? 'курьер' : 'заказ агрегатора'}
+            <div class="text-muted" style="font-size:0.85rem;">${itemsStr}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="status-pill status-${o.status}">${STATUS_LABELS[o.status] || o.status}</span><br>
+            <span class="${o.payment_status === 'paid' ? 'pay-paid' : 'pay-pending'}" style="font-size:0.85rem;">${o.payment_status === 'paid' ? 'Оплачено' : 'Ожидает оплаты'}</span>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div class="text-muted" style="font-size:0.85rem;">
+            Сумма ${o.subtotal} ₽ · комиссия ${o.commission_amount.toFixed(2)} ₽ · к выплате ${o.restaurant_payout.toFixed(2)} ₽
+          </div>
+          <div>
+            ${o.payment_status !== 'paid' ? `<button type="button" class="secondary" onclick="markPaid(${o.id})">Отметить оплаченным</button>` : ''}
+            ${nextStatus && o.status !== 'cancelled' ? `<button type="button" onclick="setStatus(${o.id}, '${nextStatus}')">→ ${STATUS_LABELS[nextStatus]}</button>` : ''}
+            ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button type="button" class="danger" onclick="setStatus(${o.id}, 'cancelled')">Отменить</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function setStatus(id, status) {
+  await api(`/orders/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+  boot();
+}
+async function markPaid(id) {
+  await api(`/orders/${id}/mark-paid`, { method: 'POST' });
+  boot();
+}
+
+async function boot() {
+  try {
+    const { restaurant } = await api('/me');
+    renderDashboard(restaurant);
+  } catch {
+    renderLogin();
+  }
+}
+boot();
+</script>
+</body>
+</html>

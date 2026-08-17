@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Кабинет платформы — ТюменьFood</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="site-header">
+  <div class="brand"><a href="/" style="color:#fff">🍲 ТюменьFood</a> — кабинет платформы</div>
+  <nav id="navArea"></nav>
+</header>
+<main id="app">Загрузка…</main>
+
+<script>
+const AGG_LABELS = { yandex_eda: 'Яндекс Еда', yandex_lavka: 'Яндекс Лавка', kuper: 'Купер', broniboy: 'Broniboy' };
+const SOURCE_LABELS = { direct: 'Сайт', ...AGG_LABELS };
+
+async function api(path, opts) {
+  const res = await fetch(`/api/platform${path}`, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+async function webhookApi(aggregator, payload) {
+  const res = await fetch(`/api/webhooks/${aggregator}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка вебхука');
+  return data;
+}
+
+function renderLogin(error) {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  requisitesCache = null;
+  document.getElementById('navArea').innerHTML = '';
+  document.getElementById('app').innerHTML = `
+    <div class="card login-box">
+      <h1 class="mt-0">Вход в кабинет платформы</h1>
+      ${error ? `<p style="color:#e03131">${error}</p>` : ''}
+      <form id="loginForm">
+        <label>Логин<input type="text" name="username" required></label>
+        <label>Пароль<input type="password" name="password" required></label>
+        <button type="submit" style="width:100%;margin-top:12px;">Войти</button>
+      </form>
+      <p class="text-muted" style="margin-top:14px;font-size:0.82rem;">Демо-доступ после <code>npm run seed</code>: admin / admin12345</p>
+    </div>`;
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api('/login', { method: 'POST', body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }) });
+      boot();
+    } catch (err) { renderLogin(err.message); }
+  });
+}
+
+let autoRefreshTimer = null;
+let requisitesCache = null;
+
+async function renderDashboard(isAutoRefresh) {
+  if (!isAutoRefresh) {
+    document.getElementById('navArea').innerHTML = `<a href="#" id="logoutLink" style="color:#fff">Выйти</a>`;
+    document.getElementById('logoutLink').onclick = async (e) => { e.preventDefault(); await api('/logout', { method: 'POST' }); boot(); };
+  }
+
+  let requisites = requisitesCache;
+  const fetches = [api('/stats'), api('/restaurants'), api('/orders')];
+  if (!requisites) fetches.push(api('/requisites').catch(() => null));
+  const results = await Promise.all(fetches);
+  const [stats, restaurants, orders] = results;
+  if (!requisites) { requisites = results[3]; requisitesCache = requisites; }
+
+  const bySourceHtml = stats.bySource.map(s => `<div class="cart-line"><span>${SOURCE_LABELS[s.aggregator_source] || s.aggregator_source}</span><span>${s.orders_count} зак. · ${s.commission.toFixed(0)} ₽ комиссии</span></div>`).join('') || '<p class="text-muted">Пока нет оплаченных заказов</p>';
+
+  const now = new Date().toLocaleTimeString('ru-RU');
+
+  const requisitesHtml = requisites ? `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div><b>${requisites.short_name || requisites.full_name}</b></div>
+        <button type="button" class="secondary" id="editRequisitesBtn">Изменить</button>
+      </div>
+      <table style="margin-top:10px;">
+        <tbody>
+          <tr><th>Полное наименование</th><td>${requisites.full_name || ''}</td></tr>
+          <tr><th>Юр. адрес</th><td>${requisites.legal_address || ''}</td></tr>
+          <tr><th>ИНН</th><td>${requisites.inn || ''}</td></tr>
+          <tr><th>ОГРНИП</th><td>${requisites.ogrnip || ''}</td></tr>
+          <tr><th>Расчётный счёт</th><td>${requisites.checking_account || ''}</td></tr>
+          <tr><th>Корр. счёт</th><td>${requisites.correspondent_account || ''}</td></tr>
+          <tr><th>БИК</th><td>${requisites.bik || ''}</td></tr>
+          <tr><th>Банк</th><td>${requisites.bank_name || ''}</td></tr>
+          <tr><th>Email / телефон</th><td>${requisites.email || ''} · ${requisites.contact_phone || ''}</td></tr>
+        </tbody>
+      </table>
+      <div id="requisitesEditBox" style="display:none;margin-top:12px;"></div>
+    </div>
+  ` : `
+    <div class="card"><p class="text-muted">Реквизиты ещё не заполнены.</p>
+      <button type="button" class="secondary" id="editRequisitesBtn">Заполнить реквизиты</button>
+      <div id="requisitesEditBox" style="display:none;margin-top:12px;"></div>
+    </div>
+  `;
+
+  document.getElementById('app').innerHTML = `
+    <h1 class="mt-0">Сводка платформы</h1>
+    <p class="subtitle" style="display:flex;align-items:center;gap:8px;">
+      <span style="width:8px;height:8px;border-radius:999px;background:#2f9e44;display:inline-block;"></span>
+      Обновляется в реальном времени · последнее обновление ${now}
+    </p>
+    <div class="stat-row">
+      <div class="stat-card"><div class="num">${stats.restaurantsCount}</div><div class="label">Активных ресторанов</div></div>
+      <div class="stat-card"><div class="num">${stats.totals.orders_count}</div><div class="label">Оплаченных заказов</div></div>
+      <div class="stat-card"><div class="num">${stats.totals.gross_gmv.toFixed(0)} ₽</div><div class="label">Оборот (GMV)</div></div>
+      <div class="stat-card"><div class="num">${stats.totals.platform_commission_earned.toFixed(2)} ₽</div><div class="label">Начислено комиссии 7%</div></div>
+    </div>
+
+    <h2>Реквизиты для приёма комиссии</h2>
+    <div class="note-box">
+      Здесь показана сумма комиссии, начисленной автоматически по всем оплаченным заказам, и реквизиты, на которые
+      она должна перечисляться. В демо-режиме (без подключённого эквайринга) это <b>расчётная</b> сумма — реального
+      банковского перевода не происходит, пока не подключён реальный платёжный провайдер (ЮKassa/CloudPayments и т.п.,
+      см. README). После подключения провайдер будет переводить деньги именно на эти реквизиты.
+    </div>
+    ${requisitesHtml}
+
+    <h2>Комиссия по источнику заказов</h2>
+    <div class="card">${bySourceHtml}</div>
+
+    <h2>Рестораны-партнёры</h2>
+    <div id="restaurantsBox"></div>
+
+    <h2>Добавить ресторан</h2>
+    <div class="card">
+      <form id="addRestaurantForm">
+        <label>Название<input type="text" name="name" required></label>
+        <label>Slug (латиницей, для ссылки)<input type="text" name="slug" required pattern="[a-z0-9-]+"></label>
+        <label>Адрес<input type="text" name="address"></label>
+        <label>Телефон<input type="text" name="phone"></label>
+        <label>Комиссия, доля (например 0.07 = 7%)<input type="text" name="commission_rate" value="0.07"></label>
+        <label>Логин кабинета ресторана<input type="text" name="admin_username" required></label>
+        <label>Пароль кабинета ресторана<input type="password" name="admin_password" required></label>
+        <button type="submit" style="margin-top:10px;">Подключить ресторан</button>
+      </form>
+    </div>
+
+    <h2>Последние заказы (вся платформа)</h2>
+    <div class="card" style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>№</th><th>Ресторан</th><th>Источник</th><th>Сумма</th><th>Комиссия</th><th>Оплата</th><th>Статус</th></tr></thead>
+        <tbody>
+          ${orders.slice(0, 50).map(o => `
+            <tr>
+              <td>${o.id}</td>
+              <td>${o.restaurant_name}</td>
+              <td>${SOURCE_LABELS[o.aggregator_source] || o.aggregator_source}</td>
+              <td>${o.subtotal} ₽</td>
+              <td>${o.commission_amount.toFixed(2)} ₽</td>
+              <td class="${o.payment_status === 'paid' ? 'pay-paid' : 'pay-pending'}">${o.payment_status === 'paid' ? 'оплачен' : 'ожидает'}</td>
+              <td><span class="status-pill status-${o.status}">${o.status}</span></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Демо: имитировать заказ от агрегатора</h2>
+    <div class="card">
+      <p class="text-muted">Отправляет тестовый вебхук на <code>/api/webhooks/&lt;агрегатор&gt;</code> — так в реальной интеграции агрегатор присылал бы заказ, оформленный в его собственном приложении.</p>
+      <form id="webhookForm">
+        <label>Ресторан
+          <select name="restaurant_slug">${restaurants.map(r => `<option value="${r.slug}">${r.name}</option>`).join('')}</select>
+        </label>
+        <label>Агрегатор
+          <select name="aggregator">${Object.entries(AGG_LABELS).map(([c, l]) => `<option value="${c}">${l}</option>`).join('')}</select>
+        </label>
+        <button type="submit" class="secondary" style="margin-top:10px;">Отправить тестовый заказ</button>
+      </form>
+      <p id="webhookResult" style="margin-top:8px;"></p>
+    </div>
+  `;
+
+  renderRestaurants(restaurants);
+
+  document.getElementById('addRestaurantForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    try {
+      await api('/restaurants', { method: 'POST', body: JSON.stringify(payload) });
+      boot();
+    } catch (err) { alert(err.message); }
+  });
+
+  document.getElementById('webhookForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const aggregator = fd.get('aggregator');
+    const payload = {
+      restaurant_slug: fd.get('restaurant_slug'),
+      customer: { name: 'Демо-клиент ' + AGG_LABELS[aggregator], phone: '+7 900 111-22-33' },
+      items: [{ name: 'Тестовая позиция из ' + AGG_LABELS[aggregator], price: 350, qty: 2 }],
+    };
+    const resultEl = document.getElementById('webhookResult');
+    try {
+      const data = await webhookApi(aggregator, payload);
+      resultEl.style.color = '#2f9e44';
+      resultEl.textContent = `Заказ №${data.orderId} создан, комиссия платформы: ${data.commission.commissionAmount} ₽`;
+      boot();
+    } catch (err) {
+      resultEl.style.color = '#e03131';
+      resultEl.textContent = err.message;
+    }
+  });
+
+  const editBtn = document.getElementById('editRequisitesBtn');
+  if (editBtn) {
+    editBtn.addEventListener('click', () => {
+      const box = document.getElementById('requisitesEditBox');
+      const r = requisites || {};
+      box.style.display = 'block';
+      box.innerHTML = `
+        <form id="requisitesForm">
+          <label>Полное наименование<input type="text" name="full_name" value="${r.full_name || ''}"></label>
+          <label>Сокращённое наименование<input type="text" name="short_name" value="${r.short_name || ''}"></label>
+          <label>Юридический адрес<input type="text" name="legal_address" value="${r.legal_address || ''}"></label>
+          <label>ИНН<input type="text" name="inn" value="${r.inn || ''}"></label>
+          <label>ОГРНИП<input type="text" name="ogrnip" value="${r.ogrnip || ''}"></label>
+          <label>Расчётный счёт<input type="text" name="checking_account" value="${r.checking_account || ''}"></label>
+          <label>Корр. счёт<input type="text" name="correspondent_account" value="${r.correspondent_account || ''}"></label>
+          <label>БИК<input type="text" name="bik" value="${r.bik || ''}"></label>
+          <label>Банк<input type="text" name="bank_name" value="${r.bank_name || ''}"></label>
+          <label>Владелец<input type="text" name="owner_name" value="${r.owner_name || ''}"></label>
+          <label>Email<input type="text" name="email" value="${r.email || ''}"></label>
+          <label>Телефон<input type="text" name="contact_phone" value="${r.contact_phone || ''}"></label>
+          <button type="submit" style="margin-top:10px;">Сохранить реквизиты</button>
+        </form>`;
+      document.getElementById('requisitesForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        try {
+          await api('/requisites', { method: 'PUT', body: JSON.stringify(Object.fromEntries(fd.entries())) });
+          requisitesCache = null;
+          boot();
+        } catch (err) { alert(err.message); }
+      });
+    });
+  }
+
+  if (!isAutoRefresh) {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => renderDashboard(true), 5000);
+  }
+}
+
+function renderRestaurants(restaurants) {
+  const box = document.getElementById('restaurantsBox');
+  box.innerHTML = restaurants.map(r => `
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div>
+          <b>${r.name}</b> <span class="text-muted">/r/${r.slug}</span>
+          <div class="text-muted" style="font-size:0.85rem;">${r.address || ''} · комиссия ${Math.round(r.commission_rate * 100)}%</div>
+        </div>
+        <span class="status-pill ${r.status === 'active' ? 'status-ready' : 'status-cancelled'}">${r.status}</span>
+      </div>
+      <div style="margin-top:10px;">
+        <span class="text-muted" style="font-size:0.85rem;">Подключённые агрегаторы:</span>
+        ${Object.entries(AGG_LABELS).map(([code, label]) => `
+          <label class="option" style="display:inline-flex;margin-right:14px;">
+            <input type="checkbox" data-restaurant="${r.id}" data-agg="${code}" ${r.aggregators_enabled.includes(code) ? 'checked' : ''} onchange="toggleAggregator(this)">
+            ${label}
+          </label>`).join('')}
+      </div>
+      <div style="margin-top:8px;">
+        <button type="button" class="secondary" onclick="toggleStatus(${r.id}, '${r.status === 'active' ? 'paused' : 'active'}')">
+          ${r.status === 'active' ? 'Приостановить' : 'Активировать'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function toggleStatus(id, status) {
+  await api(`/restaurants/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  boot();
+}
+
+async function toggleAggregator(checkbox) {
+  const restaurantId = checkbox.dataset.restaurant;
+  const restaurants = await api('/restaurants');
+  const r = restaurants.find(x => String(x.id) === String(restaurantId));
+  let enabled = new Set(r.aggregators_enabled);
+  if (checkbox.checked) enabled.add(checkbox.dataset.agg); else enabled.delete(checkbox.dataset.agg);
+  await api(`/restaurants/${restaurantId}`, { method: 'PATCH', body: JSON.stringify({ aggregators_enabled: [...enabled] }) });
+}
+
+async function boot() {
+  try {
+    await api('/restaurants');
+    renderDashboard();
+  } catch {
+    renderLogin();
+  }
+}
+boot();
+</script>
+</body>
+</html>

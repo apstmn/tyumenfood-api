@@ -1,0 +1,18 @@
+{
+  "name": "food-marketplace",
+  "version": "1.0.0",
+  "description": "Демо-платформа доставки готовой еды: маркетплейс ресторанов Тюмени с автоматической комиссией 7% и заготовками интеграций с агрегаторами и платёжными провайдерами.",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node server/seed.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "qrcode": "^1.5.4"
+  }
+}
